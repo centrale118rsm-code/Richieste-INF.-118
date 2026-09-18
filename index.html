@@ -69,9 +69,7 @@
         #requests-container { padding: 10px 15px; flex: 1; overflow-y: auto; padding-bottom: 100px; display: block; }
         
         /* --- MAIN CONTENT (IFRAME TURNI) --- */
-        #turni-container { display: none; flex: 1; padding: 0; background: #fff; }
-        #turni-container iframe { width: 100%; height: 100%; min-height: calc(100vh - 150px); border: none; display: block; }
-        
+                
         .section-title { font-size: 0.8rem; font-weight: 900; color: var(--primary); text-transform: uppercase; letter-spacing: 1px; margin: 15px 0 8px 5px; }
         .month-group { margin-bottom: 16px; background: var(--bg-card); border-radius: 12px; border: 1px solid var(--border); box-shadow: var(--shadow); overflow: hidden; }
         
@@ -217,10 +215,25 @@
 </head>
 <body>
 
+    <script>
+        // Freccia "indietro": se la pagina è aperta dentro il pannello Richieste di
+        // infermieri.html (stesso dominio, iframe), torna semplicemente ai turni chiudendo
+        // il pannello, invece di navigare l'iframe stesso su infermieri.html. Se la pagina
+        // è aperta da sola (fuori dall'iframe), il link normale funziona come prima.
+        function goBackToTurni(e) {
+            if (window.self !== window.top) {
+                e.preventDefault();
+                try { window.parent.closeRichiestePanel(); } catch(err) {}
+                return false;
+            }
+            return true;
+        }
+    </script>
+
     <header>
         <div class="header-top">
             <div class="header-left">
-                <a href="infermieri.html" class="btn-back"><span class="material-icons-round">arrow_back</span></a>
+                <a href="infermieri.html" class="btn-back" onclick="return goBackToTurni(event)"><span class="material-icons-round">arrow_back</span></a>
                 <div style="display: flex; flex-direction: column;">
                     <div class="page-title">Gestione Richieste</div>
                     <div id="loginStatusDisplay" style="display:none; font-size: 0.8rem; font-weight: 800; color: #fde047; margin-top: 2px;">
@@ -248,22 +261,9 @@
             <span class="material-icons-round">search</span>
             <input type="text" id="searchInput" placeholder="Cerca nome o tipo..." onkeyup="window.renderRequests()">
         </div>
-
-        <div class="main-tabs" id="mainTabs">
-            <div class="main-tab active" id="btnTabRichieste" onclick="window.switchTab('richieste')">
-                <span class="material-icons-round" style="font-size:16px">list_alt</span> Richieste
-            </div>
-            <div class="main-tab" id="btnTabTurni" onclick="window.switchTab('turni')">
-                <span class="material-icons-round" style="font-size:16px">calendar_month</span> Turni
-            </div>
-        </div>
     </header>
 
     <main id="requests-container"></main>
-
-    <main id="turni-container">
-        <iframe id="iframeTurni" src="https://centrale118rsm-code.github.io/Turni-Infermieri-2026/" title="Consultazione Turni"></iframe>
-    </main>
 
     <button class="fab" id="mainFab" onclick="window.openAddModal()">
         <span class="material-icons-round">add</span>
@@ -362,6 +362,7 @@
                             <option value="permesso_notte">Permesso straordinario Notte</option>
                             <option value="permesso_lutto">Permesso Lutto</option>
                             <option value="aspettativa">Aspettativa</option>
+                            <option value="permesso_sindacale">Permesso Sindacale</option>
                         </optgroup>
                         
                         <optgroup label="🔄 CAMBI E COPERTURE">
@@ -729,7 +730,10 @@
         function populateNameSelects() {
             const names = NURSE_NAMES_R.slice().sort();
             [
-                { id: 'loginSelectName', extra: [{ value: 'Centrale 118', label: '💻 Centrale 118 (Account Condiviso)' }] },
+                { id: 'loginSelectName', extra: [
+                    { value: 'Centrale 118', label: '💻 Centrale 118 (Account Condiviso)' },
+                    { value: 'Ospite', label: '👤 Ospite (può scegliere l\'operatore ad ogni richiesta)' }
+                ] },
                 { id: 'reqName', extra: [] },
                 { id: 'reqNameSwap', extra: [] }
             ].forEach(cfg => {
@@ -765,9 +769,17 @@
         // realmente presente in turni.xlsx, accede subito senza mostrare il login.
         function tryAutoLoginFromParent() {
             if (!identityFromParent || currentUser === identityFromParent) return;
-            const match = NURSE_NAMES_R.find(n => normalizeRepNameR(n) === normalizeRepNameR(identityFromParent));
-            if (!match) return; // nome non riconosciuto tra gli infermieri (es. "Ospite"): resta il login manuale
-            const name = titleCase(match);
+            // "Ospite" non è un nominativo del file turni: viene riconosciuto direttamente,
+            // senza cercarlo tra gli infermieri, e dà accesso libero a scegliere l'operatore
+            // ad ogni richiesta (stesso comportamento di "Centrale 118").
+            let name = null;
+            if (normalizeRepNameR(identityFromParent) === 'OSPITE') {
+                name = 'Ospite';
+            } else {
+                const match = NURSE_NAMES_R.find(n => normalizeRepNameR(n) === normalizeRepNameR(identityFromParent));
+                if (match) name = titleCase(match);
+            }
+            if (!name) return; // nome non riconosciuto: resta il login manuale
             localStorage.setItem('infermieri_richieste_user_name', name);
             currentUser = name;
             updateHeaderName(currentUser);
@@ -805,7 +817,8 @@
             "permesso_sportivo":      "Permesso Sportivo",
             "permesso_notte":         "Permesso straordinario Notte",
             "permesso_lutto":         "Permesso Lutto",
-            "aspettativa":            "Aspettativa"
+            "aspettativa":            "Aspettativa",
+            "permesso_sindacale":     "Permesso Sindacale"
         };
 
         const ICONS = {
@@ -821,7 +834,8 @@
             "permesso_sportivo":      "sports_soccer",
             "permesso_notte":         "nights_stay",
             "permesso_lutto":         "church",
-            "aspettativa":            "flight_takeoff"
+            "aspettativa":            "flight_takeoff",
+            "permesso_sindacale":     "gavel"
         };
 
         const COLORS = {
@@ -837,14 +851,16 @@
             "permesso_sportivo":      "bg-permesso",
             "permesso_notte":         "bg-permesso",
             "permesso_lutto":         "bg-default",
-            "aspettativa":            "bg-ferie"
+            "aspettativa":            "bg-ferie",
+            "permesso_sindacale":     "bg-permesso"
         };
 
         // Tipi che richiedono approvazione caposala
         const APPROVAL_TYPES = [
             'ferie', 'ferie_anno_prec', 'permesso_ore', 'permesso',
             'recupero_ore', 'permesso_matrimonio', 'permesso_studio',
-            'permesso_sportivo', 'permesso_notte', 'aspettativa', 'permesso_lutto'
+            'permesso_sportivo', 'permesso_notte', 'aspettativa', 'permesso_lutto',
+            'permesso_sindacale'
         ];
 
         // ============================================================
@@ -880,6 +896,12 @@
 
         window.addEventListener('DOMContentLoaded', () => {
             loadReperibilitaData(); // carica subito l'elenco infermieri per popolare i menu (e tenta l'auto-login)
+            // "Ospite" non richiede di aspettare l'elenco nomi (non va cercato lì dentro):
+            // proviamo subito, così l'accesso è immediato anche prima che turni.xlsx risponda.
+            if (normalizeRepNameR(identityFromParent || '') === 'OSPITE') {
+                localStorage.setItem('infermieri_richieste_user_name', 'Ospite');
+                currentUser = 'Ospite';
+            }
             // Se è stata passata un'identità dall'app Turni Infermieri, non mostriamo subito
             // il login: aspettiamo che l'elenco nomi sia pronto (tryAutoLoginFromParent,
             // chiamata da populateNameSelects) prima di decidere se serve davvero un login manuale.
@@ -985,18 +1007,6 @@
         };
 
         // ============================================================
-        // TAB SWITCH
-        // ============================================================
-        window.switchTab = function(tabName) {
-            const isRichieste = tabName === 'richieste';
-            document.getElementById('requests-container').style.display = isRichieste ? 'block' : 'none';
-            document.getElementById('searchBox').style.display = isRichieste ? 'block' : 'none';
-            document.getElementById('mainFab').style.display = isRichieste ? 'flex' : 'none';
-            document.getElementById('turni-container').style.display = isRichieste ? 'none' : 'block';
-            document.getElementById('btnTabRichieste').classList.toggle('active', isRichieste);
-            document.getElementById('btnTabTurni').classList.toggle('active', !isRichieste);
-        };
-
         // ============================================================
         // FORM — logica tipo richiesta
         // ============================================================
@@ -1060,7 +1070,7 @@
             document.getElementById('btnSubmit').textContent = "INVIA RICHIESTA";
 
             const nameSelect = document.getElementById('reqName');
-            if (currentUser === 'Centrale 118' || window.isAdmin) {
+            if (currentUser === 'Centrale 118' || currentUser === 'Ospite' || window.isAdmin) {
                 nameSelect.disabled = false;
                 nameSelect.value = "";
             } else {
@@ -1079,7 +1089,7 @@
 
             document.getElementById('modal-title-add').textContent = "Modifica Richiesta";
             const nameSelect = document.getElementById('reqName');
-            nameSelect.disabled = !(currentUser === 'Centrale 118' || window.isAdmin);
+            nameSelect.disabled = !(currentUser === 'Centrale 118' || currentUser === 'Ospite' || window.isAdmin);
             nameSelect.value = r.name;
 
             document.getElementById('reqType').value = r.type;
@@ -1213,7 +1223,7 @@
                 dateTo:           (reqType === 'copertura_reperibilita' || !dToRaw) ? dFrom : dToRaw,
                 effectiveDays:    (reqType === 'copertura_reperibilita') ? "N/A" : (document.getElementById('reqDays').value || "1"),
                 notes:            document.getElementById('reqNotes').value.trim(),
-                headNurseApproval: APPROVAL_TYPES.includes(reqType) ? 'attesa' : 'non_richiesta',
+                headNurseApproval: APPROVAL_TYPES.includes(reqType) ? 'si' : 'non_richiesta',
                 insertedInShifts:  false,
                 insertedAt:        null
             };
@@ -1249,7 +1259,22 @@
             if (payload.otherShift) html += row('Turno di ' + (payload.swapWith || 'collega'), SHIFT_NAMES_SUMMARY[payload.otherShift] || payload.otherShift);
             if (payload.type !== 'copertura_reperibilita' && payload.type !== 'cambio_turno') html += row('Giorni effettivi', payload.effectiveDays);
             if (payload.notes) html += row('Note', payload.notes);
-            box.innerHTML = html || '<div class="note-empty">Nessun dettaglio da mostrare.</div>';
+
+            // Per le richieste di assenza (ferie, permessi, ecc.) chiediamo se il consenso
+            // della caposala è già stato dato a voce, oppure va ancora richiesto: incide
+            // sullo stato iniziale della richiesta (badge "Approvata" vs "In Attesa").
+            let approvalHtml = '';
+            if (APPROVAL_TYPES.includes(payload.type)) {
+                approvalHtml = `
+                    <div style="margin-top:14px; background:#fef9c3; border:1px solid #fde047; border-radius:10px; padding:12px;">
+                        <div style="font-weight:800; font-size:0.85rem; color:#854d0e; margin-bottom:8px;">Hai già il consenso della caposala?</div>
+                        <div style="display:flex; flex-direction:column; gap:6px;">
+                            <label class="checkbox-wrapper"><input type="radio" name="capoConsenso" value="si" checked> Confermato</label>
+                            <label class="checkbox-wrapper"><input type="radio" name="capoConsenso" value="attesa"> In attesa di conferma</label>
+                        </div>
+                    </div>`;
+            }
+            box.innerHTML = (html || '<div class="note-empty">Nessun dettaglio da mostrare.</div>') + approvalHtml;
         }
 
         function formatDateIt(iso) {
@@ -1288,6 +1313,8 @@
         window.confirmAndSubmitRequest = async function() {
             if (!pendingRequestPayload) return;
             const payload = pendingRequestPayload;
+            const consensoEl = document.querySelector('input[name="capoConsenso"]:checked');
+            if (consensoEl) payload.headNurseApproval = consensoEl.value;
             const btn = document.getElementById('btnConfirmRequest');
             btn.textContent = "SALVATAGGIO...";
             btn.style.opacity = "0.7";
@@ -1336,7 +1363,6 @@
             if (window.isAdmin) {
                 window.isAdmin = false;
                 document.getElementById('adminIcon').style.color = "white";
-                window.switchTab('richieste');
                 alert("Uscito dalla modalità Admin.");
             } else {
                 const pwd = prompt("Inserisci la password per l'accesso Admin:");
