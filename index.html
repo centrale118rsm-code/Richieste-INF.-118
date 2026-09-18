@@ -543,7 +543,14 @@
         window.editingId = null;
         let requests = [];
         let savedNotes = [];
-        let currentUser = localStorage.getItem('118_user_name');
+        // Chiave di storage dedicata: NON quella condivisa con il portale Autisti
+        // (stesso dominio centrale118rsm-code.github.io => stesso localStorage),
+        // altrimenti chi passa dall'app autisti risulterebbe loggato anche qui.
+        let currentUser = localStorage.getItem('infermieri_richieste_user_name');
+
+        // Identità passata dall'app Turni Infermieri quando questo portale viene aperto
+        // dal pannello laterale (stesso operatore già loggato lì, niente doppio login).
+        const identityFromParent = new URLSearchParams(location.search).get('nome');
 
         // ============================================================
         // TURNI/REPERIBILITÀ INFERMIERI — letti dal vivo da turni.xlsx (stesso file usato
@@ -710,12 +717,17 @@
             return repDataLoadPromise;
         }
 
+        // Riporta un nome in Title Case (es. "ROSSI" -> "Rossi"), usato sia per popolare i
+        // menu sia per far coincidere l'identità ricevuta da infermieri.html.
+        function titleCase(n) {
+            return (n || "").replace(/\w\S*/g, w => w.charAt(0) + w.substring(1).toLowerCase());
+        }
+
         // Popola i tre menu a tendina (login, operatore, con-chi-fai-il-cambio) con l'elenco
         // infermieri letto dal vivo dal file turni. Rieseguita ogni volta che il file viene
         // ricaricato, preservando il valore già selezionato se ancora presente in elenco.
         function populateNameSelects() {
             const names = NURSE_NAMES_R.slice().sort();
-            const titleCase = n => n.replace(/\w\S*/g, w => w.charAt(0) + w.substring(1).toLowerCase());
             [
                 { id: 'loginSelectName', extra: [{ value: 'Centrale 118', label: '💻 Centrale 118 (Account Condiviso)' }] },
                 { id: 'reqName', extra: [] },
@@ -740,6 +752,30 @@
                 });
                 if (prevValue && Array.from(sel.options).some(o => o.value === prevValue)) sel.value = prevValue;
             });
+            // Se è arrivata un'identità dall'app Turni Infermieri (stesso operatore già
+            // loggato lì) e non ci siamo già loggati qui con qualcun altro, prova ad
+            // accedere in automatico non appena l'elenco nomi è pronto — evita il doppio
+            // login e soprattutto evita di restare agganciati all'identità sbagliata
+            // (es. un autista) letta per errore da un'altra app sullo stesso dominio.
+            tryAutoLoginFromParent();
+        }
+
+        // Prova ad accedere automaticamente con l'identità ricevuta da infermieri.html
+        // (parametro "nome" nell'URL dell'iframe). Se il nome combacia con un infermiere
+        // realmente presente in turni.xlsx, accede subito senza mostrare il login.
+        function tryAutoLoginFromParent() {
+            if (!identityFromParent || currentUser === identityFromParent) return;
+            const match = NURSE_NAMES_R.find(n => normalizeRepNameR(n) === normalizeRepNameR(identityFromParent));
+            if (!match) return; // nome non riconosciuto tra gli infermieri (es. "Ospite"): resta il login manuale
+            const name = titleCase(match);
+            localStorage.setItem('infermieri_richieste_user_name', name);
+            currentUser = name;
+            updateHeaderName(currentUser);
+            const lm = document.getElementById('login-modal');
+            if (lm.style.display === 'flex') {
+                lm.style.opacity = '0';
+                setTimeout(() => { lm.style.display = 'none'; checkFirstVisitAndShowGuide(); }, 300);
+            }
         }
 
         document.addEventListener('DOMContentLoaded', () => {
@@ -843,15 +879,30 @@
         }
 
         window.addEventListener('DOMContentLoaded', () => {
-            loadReperibilitaData(); // carica subito l'elenco infermieri per popolare i menu
-            if (!currentUser) {
+            loadReperibilitaData(); // carica subito l'elenco infermieri per popolare i menu (e tenta l'auto-login)
+            // Se è stata passata un'identità dall'app Turni Infermieri, non mostriamo subito
+            // il login: aspettiamo che l'elenco nomi sia pronto (tryAutoLoginFromParent,
+            // chiamata da populateNameSelects) prima di decidere se serve davvero un login manuale.
+            if (!currentUser && !identityFromParent) {
                 const lm = document.getElementById('login-modal');
                 lm.style.display = 'flex';
                 lm.style.opacity = '1';
                 lm.style.zIndex = '9999';
-            } else {
+            } else if (currentUser) {
                 updateHeaderName(currentUser);
                 checkFirstVisitAndShowGuide();
+            } else {
+                // C'è un'identità dal genitore ma l'elenco nomi non è ancora pronto: mostriamo
+                // comunque il login dopo un breve timeout, nel caso il file turni non risponda
+                // o il nome non venga riconosciuto (rete di sicurezza, non blocca l'utente).
+                setTimeout(() => {
+                    if (!currentUser) {
+                        const lm = document.getElementById('login-modal');
+                        lm.style.display = 'flex';
+                        lm.style.opacity = '1';
+                        lm.style.zIndex = '9999';
+                    }
+                }, 4000);
             }
         });
 
@@ -867,7 +918,7 @@
         window.saveUserLogin = function() {
             const name = document.getElementById('loginSelectName').value;
             if (!name) { alert("Seleziona il tuo nome prima di procedere."); return; }
-            localStorage.setItem('118_user_name', name);
+            localStorage.setItem('infermieri_richieste_user_name', name);
             currentUser = name;
             updateHeaderName(currentUser);
             const lm = document.getElementById('login-modal');
