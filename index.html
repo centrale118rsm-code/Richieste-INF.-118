@@ -134,6 +134,7 @@
             transition: transform 0.2s;
         }
         .fab:active { transform: scale(0.9); }
+        .fab:disabled { opacity: 0.5; pointer-events: none; }
         .fab .material-icons-round { font-size: 30px; }
 
         .modal-overlay {
@@ -265,7 +266,7 @@
 
     <main id="requests-container"></main>
 
-    <button class="fab" id="mainFab" onclick="window.openAddModal()">
+    <button class="fab" id="mainFab" disabled onclick="window.openAddModal()">
         <span class="material-icons-round">add</span>
     </button>
 
@@ -790,6 +791,7 @@
             localStorage.setItem('infermieri_richieste_user_name', name);
             currentUser = name;
             updateHeaderName(currentUser);
+            enableFab();
             const lm = document.getElementById('login-modal');
             if (lm.style.display === 'flex') {
                 lm.style.opacity = '0';
@@ -901,6 +903,12 @@
             document.getElementById('loginStatusDisplay').style.display = 'block';
         }
 
+        // Il pulsante "+" resta disabilitato finché non sappiamo con certezza chi è
+        // l'operatore: evita che un tap troppo rapido apra il form prima che l'auto-login
+        // (che deve aspettare il caricamento di turni.xlsx) sia riuscito, con il rischio che
+        // il campo Operatore si blocchi sul primo nome della lista invece di quello giusto.
+        function enableFab() { const fab = document.getElementById('mainFab'); if (fab) fab.disabled = false; }
+
         window.addEventListener('DOMContentLoaded', () => {
             loadReperibilitaData(); // carica subito l'elenco infermieri per popolare i menu (e tenta l'auto-login)
             // "Ospite" non richiede di aspettare l'elenco nomi (non va cercato lì dentro):
@@ -920,6 +928,7 @@
             } else if (currentUser) {
                 updateHeaderName(currentUser);
                 checkFirstVisitAndShowGuide();
+                enableFab();
             } else {
                 // C'è un'identità dal genitore ma l'elenco nomi non è ancora pronto: mostriamo
                 // comunque il login dopo un breve timeout, nel caso il file turni non risponda
@@ -950,6 +959,7 @@
             localStorage.setItem('infermieri_richieste_user_name', name);
             currentUser = name;
             updateHeaderName(currentUser);
+            enableFab();
             const lm = document.getElementById('login-modal');
             lm.style.opacity = '0';
             setTimeout(() => { lm.style.display = 'none'; checkFirstVisitAndShowGuide(); }, 300);
@@ -1071,6 +1081,7 @@
         // OPEN ADD / EDIT MODAL
         // ============================================================
         window.openAddModal = function() {
+            if (!currentUser) { alert("Attendi qualche istante, sto ancora verificando chi sei..."); return; }
             window.editingId = null;
             document.getElementById('modal-title-add').textContent = "Nuova Richiesta";
             document.getElementById('requestForm').reset();
