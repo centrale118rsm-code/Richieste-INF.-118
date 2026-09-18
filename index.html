@@ -527,6 +527,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
         import { getFirestore, collection, addDoc, setDoc, onSnapshot, deleteDoc, doc, updateDoc, query, orderBy, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyDCycpsVJus8Mwd-AqaPORZIrFUIyo00VQ",
@@ -539,6 +540,12 @@
 
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
+        // Autenticazione anonima: stesso progetto Firebase di infermieri.html, che si
+        // autentica così prima di scrivere. Senza questo, se le regole di sicurezza
+        // richiedono un utente autenticato, ogni salvataggio da qui viene rifiutato
+        // ("Errore durante il salvataggio.") pur essendo tutto corretto nel form.
+        const auth = getAuth(app);
+        const authReadyPromise = signInAnonymously(auth).catch(e => console.error("Errore autenticazione anonima:", e));
 
         window.isAdmin = false;
         window.editingId = null;
@@ -1320,6 +1327,7 @@
             btn.style.opacity = "0.7";
 
             try {
+                await authReadyPromise; // assicura di essere autenticati prima di scrivere
                 const doSyncRep = BIBBIA_CONFIG_R.autoSyncReperibilita !== false;
                 let requestId;
                 if (window.editingId) {
@@ -1349,7 +1357,7 @@
 
             } catch (err) {
                 console.error(err);
-                alert("Errore durante il salvataggio.");
+                alert("Errore durante il salvataggio.\n\n" + (err && err.message ? err.message : err));
             } finally {
                 btn.innerHTML = '<span class="material-icons-round" style="vertical-align:middle;font-size:18px;">check_circle</span> Sì, corretto';
                 btn.style.opacity = "1";
