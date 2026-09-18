@@ -639,7 +639,7 @@
             if (repDataLoadPromise) return repDataLoadPromise;
             repDataLoadPromise = (async () => {
                 try {
-                    const resp = await fetch("https://centrale118rsm-code.github.io/Turni-Infermieri-2026/turni.xlsx?v=" + Date.now());
+                    const resp = await fetch("https://centrale118rsm-code.github.io/Turni-Infermieri-2026/infermieri.xlsx?v=" + Date.now());
                     if (!resp.ok) throw new Error("File turni non raggiungibile");
                     const buffer = await resp.arrayBuffer();
                     const workbook = new ExcelJS.Workbook();
