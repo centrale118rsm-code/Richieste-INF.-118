@@ -561,6 +561,24 @@
         // dal pannello laterale (stesso operatore già loggato lì, niente doppio login).
         const identityFromParent = new URLSearchParams(location.search).get('nome');
 
+        // Id di una richiesta specifica da aprire subito (arriva da una notifica cliccata
+        // in infermieri.html: "?richiesta=<id>"), o passato direttamente via chiamata di
+        // funzione se il pannello era già aperto (vedi openDeepLinkRequest più sotto).
+        let pendingDeepLinkRequestId = new URLSearchParams(location.search).get('richiesta') || null;
+        // Chiamata da infermieri.html quando il pannello è già aperto e non serve
+        // ricaricare la pagina: stesso dominio, quindi accessibile direttamente.
+        window.openDeepLinkRequest = function(id) {
+            pendingDeepLinkRequestId = id;
+            tryOpenPendingDeepLink();
+        };
+        function tryOpenPendingDeepLink() {
+            if (!pendingDeepLinkRequestId) return;
+            const found = requests.find(r => r.id === pendingDeepLinkRequestId);
+            if (!found) return; // richieste non ancora caricate: si ritenta al prossimo aggiornamento
+            pendingDeepLinkRequestId = null;
+            window.openDetailModal(found.id);
+        }
+
         // ============================================================
         // TURNI/REPERIBILITÀ INFERMIERI — letti dal vivo da turni.xlsx (stesso file usato
         // dal programma Turni Infermieri 2026). A differenza degli autisti, qui NON esiste
@@ -1168,6 +1186,7 @@
             requests = [];
             snapshot.forEach(d => requests.push({ id: d.id, ...d.data() }));
             window.renderRequests();
+            tryOpenPendingDeepLink();
         });
 
         // Tiene il payload pronto in attesa di conferma dell'utente nella finestrella di riepilogo.
@@ -1642,7 +1661,8 @@
         // ============================================================
         window.openDetailModal = function(id) {
             const r = requests.find(x => x.id === id);
-            if (!r || (r.obscured && !window.isAdmin && currentUser !== 'Centrale 118')) return;
+            const canSeeObscured = window.isAdmin || currentUser === 'Centrale 118' || currentUser === 'Ospite' || (r && r.name === currentUser);
+            if (!r || (r.obscured && !canSeeObscured)) return;
 
             let html = '';
 
@@ -1738,7 +1758,7 @@
 
             html += `<div class="action-buttons" style="margin-top:20px;">`;
             if (r.obscured) {
-                if (window.isAdmin || currentUser === 'Centrale 118') {
+                if (window.isAdmin || currentUser === 'Centrale 118' || currentUser === 'Ospite' || r.name === currentUser) {
                     html += `<button class="btn-action btn-restore" onclick="window.restoreRequest('${r.id}')">Ripristina</button>`;
                     if (window.isAdmin) html += `<button class="btn-action btn-delete" onclick="window.deleteRequest('${r.id}')">Elimina</button>`;
                 }
