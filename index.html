@@ -460,6 +460,11 @@
                     </div>
                 </div>
 
+                <!-- Saldo: quanti giorni restano (dal programma Turni Infermieri) -->
+                <div class="form-group" id="saldo-group" style="display:none; background:#ecfdf5; padding:12px; border-radius:10px; border:1px solid #a7f3d0;">
+                    <div id="saldo-text" style="color:#065f46; font-size:0.82rem; font-weight:700; line-height:1.4;"></div>
+                </div>
+
                 <!-- Avviso approvazione -->
                 <div class="form-group" id="approval-group" style="display:none; background:#fef3c7; padding:12px; border-radius:10px; border:1px solid #fde68a;">
                     <div style="color:#b45309; font-size:0.8rem; font-weight:700; line-height: 1.3;">
@@ -1020,11 +1025,63 @@
         const SLOT_LABEL = ["00:00-07:00", "07:00-13:00", "13:00-20:00", "20:00-00:00"];
         const REP_DOC_R = () => doc(db, "infermieri26_config", "reperibilita");
 
+        // Saldi assenze pubblicati dal programma Turni Infermieri (C.O. 31, permessi
+        // straordinari 6, permessi notte 2; un permesso notte usa anche uno straordinario).
+        // Documento "prova_saldi" finché il programma nuovo è in prova ("saldi" quando va in uso).
+        const SALDI_DOC_ID = "prova_saldi";
+        let SALDI_R = null;
+        authReadyPromise.then(() => onSnapshot(doc(db, "infermieri26_config", SALDI_DOC_ID), (snap) => {
+            SALDI_R = snap.exists() ? snap.data() : null;
+            updateSaldoBox();
+        }, (err) => console.warn("Saldi non disponibili:", err)));
+        function saldoFor(name) {
+            if (!SALDI_R || !SALDI_R.operatori || !name) return null;
+            const n = normalizeRepNameR(name);
+            const key = Object.keys(SALDI_R.operatori).find(k => normalizeRepNameR(k) === n || normalizeRepNameR(SALDI_R.operatori[k].name) === n);
+            return key ? SALDI_R.operatori[key] : null;
+        }
+        // Quali contatori interessa ogni tipo di richiesta.
+        function saldoKeysFor(type) {
+            if (type === 'ferie') return [['co', 'Congedo ordinario']];
+            if (type === 'permesso') return [['str', 'Permessi straordinari']];
+            if (type === 'permesso_notte') return [['pn', 'Permessi notte'], ['str', 'Permessi straordinari']];
+            return [];
+        }
+        function updateSaldoBox() {
+            const box = document.getElementById('saldo-group'); if (!box) return;
+            const type = document.getElementById('reqType').value;
+            const name = document.getElementById('reqName').value || currentUser;
+            const keys = saldoKeysFor(type), sal = saldoFor(name);
+            if (!keys.length || !sal) { box.style.display = 'none'; return; }
+            const lines = keys.map(([k, label]) => {
+                const c = sal[k] || { used: 0, max: 0 }, left = c.max - c.used;
+                return `${label} ${SALDI_R.year || ''}: già usati o in calendario <b>${c.used}</b> su ${c.max} \u2014 ${left > 0 ? `restano <b>${left}</b>` : '<b style="color:#b91c1c">nessuno disponibile</b>'}`;
+            });
+            if (type === 'permesso_notte') lines.push('<span style="font-weight:500">Un permesso notte usa anche un permesso straordinario.</span>');
+            document.getElementById('saldo-text').innerHTML = lines.join('<br>');
+            const anyOut = keys.some(([k]) => (sal[k] || {}).max - (sal[k] || {}).used <= 0);
+            box.style.background = anyOut ? '#fef2f2' : '#ecfdf5'; box.style.borderColor = anyOut ? '#fecaca' : '#a7f3d0';
+            document.getElementById('saldo-text').style.color = anyOut ? '#991b1b' : '#065f46';
+            box.style.display = 'block';
+        }
+        // Giorni chiesti: "giorni effettivi" se indicati, altrimenti i giorni dal/al.
+        function requestedDays(dFrom, dTo, daysField) {
+            const n = parseFloat(daysField);
+            if (!isNaN(n) && n > 0) return n;
+            if (!dFrom) return 1;
+            const a = new Date(dFrom + 'T00:00'), b = new Date((dTo || dFrom) + 'T00:00');
+            return Math.max(1, Math.round((b - a) / 86400000) + 1);
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            ['reqType', 'reqName'].forEach(id => { const el = document.getElementById(id); if (el) el.addEventListener('change', updateSaldoBox); });
+        });
+
         // Titolari salvati dal programma turni: servono per proporre le date giuste.
-        onSnapshot(REP_DOC_R(), (snap) => {
+        // (dopo l'accesso anonimo: il documento richiede un utente autenticato)
+        authReadyPromise.then(() => onSnapshot(REP_DOC_R(), (snap) => {
             const t = snap.exists() ? (snap.data().turni || {}) : {};
             REP_TURNI_FS_R = (t && typeof t === 'object') ? t : {};
-        }, (err) => console.error("Errore lettura reperibilità infermieri:", err));
+        }, (err) => console.error("Errore lettura reperibilità infermieri:", err)));
 
         // Rimuove tutte le cessioni scritte da una richiesta.
         async function removeReperibilitaOverrides(requestId) {
@@ -1407,6 +1464,16 @@
             const dToRaw  = document.getElementById('reqDateTo').value;
             const isSwap  = (reqType === 'cambio_turno' || reqType === 'copertura_reperibilita');
 
+            // Controllo del saldo (avviso, non blocco: la decisione resta al coordinatore)
+            {
+                const keys = saldoKeysFor(reqType), sal = saldoFor(document.getElementById('reqName').value || currentUser);
+                if (keys.length && sal && !window.editingId) {
+                    const want = requestedDays(dFrom, dToRaw, document.getElementById('reqDays').value);
+                    const over = keys.map(([k, label]) => ({ label, left: (sal[k] || {}).max - (sal[k] || {}).used }))
+                        .filter(x => (reqType === 'permesso_notte' ? 1 : want) > x.left);
+                    if (over.length && !confirm(over.map(x => `${x.label}: ne restano ${Math.max(0, x.left)}`).join("\n") + `\n\nStai chiedendo ${reqType === 'permesso_notte' ? 1 : want} ${want === 1 ? 'giorno' : 'giorni'}. Inviare comunque la richiesta?`)) return;
+                }
+            }
             let selectedTimeSlots = null;
             if (reqType === 'copertura_reperibilita') {
                 if (!dFrom) {
