@@ -1105,6 +1105,12 @@
             return dt.getFullYear() + "-" + String(dt.getMonth() + 1).padStart(2, "0") + "-" + String(dt.getDate()).padStart(2, "0");
         }
 
+        // Le cessioni di reperibilità entrano da sole nel programma turni: sono già "inserite"
+        // (verdi, senza spunta). Resta la possibilità di modificarle o ritirarle.
+        function isAutoRep(r) {
+            return !!r && r.type === 'copertura_reperibilita' && !r.obscured && (r.autoApplied === true || BIBBIA_CONFIG_R.autoSyncReperibilita !== false);
+        }
+
         // Ricalcola e riscrive le cessioni di una richiesta "copertura_reperibilita".
         async function syncReperibilitaOverrides(requestId, r) {
             await removeReperibilitaOverrides(requestId);
@@ -1642,6 +1648,7 @@
             try {
                 await authReadyPromise; // assicura di essere autenticati prima di scrivere
                 const doSyncRep = BIBBIA_CONFIG_R.autoSyncReperibilita !== false;
+                if (payload.type === 'copertura_reperibilita') payload.autoApplied = doSyncRep;
                 let requestId;
                 if (window.editingId) {
                     await updateDoc(doc(db, "richieste_infermieri", window.editingId), payload);
@@ -1828,6 +1835,7 @@
                 if (r.obscured) return false;
                 if (r.headNurseApproval === 'no') return false;
                 if (r.insertedInShifts) return false;
+                if (isAutoRep(r)) return false;
                 return true;
             };
 
@@ -1857,7 +1865,7 @@
 
                 let rowClass = r.obscured ? "row-obscured"
                     : r.headNurseApproval === 'no' ? "row-rejected"
-                    : r.insertedInShifts ? "row-confirmed"
+                    : (r.insertedInShifts || isAutoRep(r)) ? "row-confirmed"
                     : "row-pending";
 
                 let caposalaBadge = '';
@@ -1872,7 +1880,8 @@
                 if (r.swapWith) periodDetails += ` ↔ ${r.swapWith}`;
 
                 const adminTag     = (r.obscured && (window.isAdmin || currentUser === 'Centrale 118')) ? `<span style="color:#ef4444;font-size:0.65rem;margin-right:4px;">[OSCURATA]</span>` : '';
-                const insertButton = (!r.obscured && window.isAdmin) ? `
+                const insertButton = isAutoRep(r) ? `<span style="color:#059669;font-weight:800;background:rgba(255,255,255,0.7);padding:2px 8px;border-radius:4px;font-size:0.65rem;border:1px solid #10b981;display:inline-flex;align-items:center;gap:3px;"><span class="material-icons-round" style="font-size:13px">bolt</span>Inserita in automatico</span>`
+                    : (!r.obscured && window.isAdmin) ? `
                     <button class="btn-quick-insert ${r.insertedInShifts ? 'inserted' : ''}" onclick="event.stopPropagation(); window.toggleInserted('${r.id}', ${r.insertedInShifts})">
                         <span class="material-icons-round" style="font-size:14px">${r.insertedInShifts ? 'check_circle' : 'radio_button_unchecked'}</span>
                         ${r.insertedInShifts ? 'Inserito' : 'Segna inserito'}
@@ -1957,7 +1966,9 @@
             html += `<div class="detail-item" style="background:#f8fafc;padding:12px;border-radius:8px;">
                         <div class="detail-label" style="color:var(--primary);">Stato Inserimento Turni</div>
                         <div class="detail-value" style="font-size:0.95rem;">
-                            ${r.insertedInShifts
+                            ${isAutoRep(r)
+                                ? `<span style="color:#059669;font-weight:700;">✓ Inserita in automatico nel programma turni</span><div style="font-size:0.78rem;color:#64748b;font-weight:600;margin-top:4px;">Le fasce cedute compaiono subito nel calendario delle reperibilità: non serve spuntarla.</div>`
+                                : r.insertedInShifts
                                 ? `<span style="color:#059669;font-weight:700;">✓ Inserita il ${r.insertedAt ? new Date(r.insertedAt).toLocaleString('it-IT') : 'Data non disponibile'}</span>`
                                 : `<span style="color:#64748b;font-weight:700;">⏳ In attesa di inserimento</span>`}
                         </div>
@@ -2024,7 +2035,7 @@
                 }
             }
 
-            if (window.isAdmin) {
+            if (window.isAdmin && !isAutoRep(r)) {
                 hasControls = true;
                 html += `<div class="admin-controls">
                             <h4>Gestione Turni (Solo Admin)</h4>
