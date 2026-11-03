@@ -1637,13 +1637,15 @@
 
         // Conferma definitiva: qui avviene il vero salvataggio su Firestore.
         window.confirmAndSubmitRequest = async function() {
-            if (!pendingRequestPayload) return;
+            if (!pendingRequestPayload || window._savingRequest) return; // niente doppio invio
+            window._savingRequest = true;
             const payload = pendingRequestPayload;
             const consensoEl = document.querySelector('input[name="capoConsenso"]:checked');
             if (consensoEl) payload.headNurseApproval = consensoEl.value;
             const btn = document.getElementById('btnConfirmRequest');
             btn.textContent = "SALVATAGGIO...";
             btn.style.opacity = "0.7";
+            btn.disabled = true;
 
             try {
                 await authReadyPromise; // assicura di essere autenticati prima di scrivere
@@ -1660,12 +1662,18 @@
                         obscured: false
                     });
                     requestId = newDocRef.id;
+                    // la richiesta ormai c'è: se qualcosa dopo va storto e si riprova,
+                    // si aggiorna questa invece di crearne un'altra uguale
+                    window.editingId = requestId;
                 }
+                // Il collegamento al programma turni non deve far fallire la richiesta già salvata.
                 if (doSyncRep) {
-                    await syncReperibilitaOverrides(requestId, { ...payload, obscured: false });
+                    try { await syncReperibilitaOverrides(requestId, { ...payload, obscured: false }); }
+                    catch (e) { console.warn("Cessioni reperibilità non aggiornate:", e); }
                 }
                 if (payload.type === 'cambio_turno') {
-                    await syncTurnoOverride(requestId, { ...payload, obscured: false });
+                    try { await syncTurnoOverride(requestId, { ...payload, obscured: false }); }
+                    catch (e) { console.warn("Scambio turno non registrato:", e); }
                 }
 
                 document.getElementById('requestForm').reset();
@@ -1679,6 +1687,8 @@
                 console.error(err);
                 alert("Errore durante il salvataggio.\n\n" + (err && err.message ? err.message : err));
             } finally {
+                window._savingRequest = false;
+                btn.disabled = false;
                 btn.innerHTML = '<span class="material-icons-round" style="vertical-align:middle;font-size:18px;">check_circle</span> Sì, corretto';
                 btn.style.opacity = "1";
             }
