@@ -212,6 +212,11 @@
         /* Stile Optgroup */
         optgroup { font-weight: 800; font-style: normal; color: var(--primary); background-color: #f8fafc; }
         optgroup option { font-weight: 600; color: var(--text-main); background-color: #ffffff; padding: 5px; }
+        /* Cambia nome: solo da PC (mouse), non da telefono/tablet */
+        .change-name-btn { display: none; align-items: center; gap: 3px; margin-left: 8px; padding: 2px 8px; border: 1px solid rgba(255,255,255,0.6); border-radius: 999px; background: rgba(255,255,255,0.15); color: #fff; font-size: 0.7rem; font-weight: 800; cursor: pointer; vertical-align: middle; }
+        .change-name-btn .material-icons-round { font-size: 14px; }
+        .change-name-btn:hover { background: rgba(255,255,255,0.3); }
+        @media (hover: hover) and (pointer: fine) { .change-name-btn { display: inline-flex; } }
     </style>
 </head>
 <body>
@@ -239,6 +244,7 @@
                     <div class="page-title">Gestione Richieste</div>
                     <div id="loginStatusDisplay" style="display:none; font-size: 0.8rem; font-weight: 800; color: #fde047; margin-top: 2px;">
                         LOGGATO COME: <span id="headerUserName" style="color: #ffffff; font-size: 0.95rem; font-weight: 900; text-transform: uppercase;"></span>
+                        <button type="button" class="change-name-btn" onclick="window.openChangeName()" title="Cambia il nome con cui fai le richieste"><span class="material-icons-round">swap_horiz</span>CAMBIA</button>
                     </div>
                 </div>
             </div>
@@ -274,7 +280,7 @@
     <div id="login-modal" class="modal-overlay">
         <div class="modal-content" style="border-radius: 20px; transform: translateY(0); margin: 20px; align-self: center;">
             <div class="modal-header">
-                <h3>Benvenuto, chi sei?</h3>
+                <h3 id="loginTitle">Benvenuto, chi sei?</h3>
             </div>
             <div class="form-group">
                 <label>Seleziona il tuo nome per continuare</label>
@@ -284,6 +290,7 @@
             </div>
             <p style="font-size:0.75rem; color:var(--text-sec); margin-bottom: 15px;">Il nome verrà salvato su questo dispositivo.</p>
             <button class="btn-submit" onclick="window.saveUserLogin()">SALVA ED ENTRA</button>
+            <button type="button" id="loginCancelBtn" onclick="window.cancelChangeName()" style="display:none; width:100%; margin-top:10px; padding:12px; border:1px solid #cbd5e1; border-radius:12px; background:#fff; color:#475569; font-weight:800; cursor:pointer;">ANNULLA</button>
         </div>
     </div>
 
@@ -1232,13 +1239,42 @@
             }
         }
 
+        // Cambio nome dal PC: riapre la finestra "chi sei?" con il nome attuale già scelto.
+        // Su telefono il pulsante non c'è (vedi .change-name-btn nel CSS) e qui si ricontrolla.
+        function isDesktopPointer() {
+            try { return window.matchMedia('(hover: hover) and (pointer: fine)').matches; } catch (e) { return false; }
+        }
+        window.openChangeName = function() {
+            if (!isDesktopPointer()) return;
+            const sel = document.getElementById('loginSelectName');
+            if (currentUser && Array.from(sel.options).some(o => o.value === currentUser)) sel.value = currentUser;
+            document.getElementById('loginTitle').textContent = 'Cambia nome';
+            document.getElementById('loginCancelBtn').style.display = 'block';
+            const lm = document.getElementById('login-modal');
+            lm.style.display = 'flex';
+            lm.style.opacity = '1';
+            lm.style.zIndex = '9999';
+        };
+        window.cancelChangeName = function() {
+            const lm = document.getElementById('login-modal');
+            lm.style.opacity = '0';
+            setTimeout(() => { lm.style.display = 'none'; }, 300);
+            document.getElementById('loginTitle').textContent = 'Benvenuto, chi sei?';
+            document.getElementById('loginCancelBtn').style.display = 'none';
+        };
+
         window.saveUserLogin = function() {
             const name = document.getElementById('loginSelectName').value;
             if (!name) { alert("Seleziona il tuo nome prima di procedere."); return; }
             localStorage.setItem('infermieri_richieste_user_name', name);
+            const changed = currentUser && currentUser !== name;
             currentUser = name;
             updateHeaderName(currentUser);
             enableFab();
+            document.getElementById('loginTitle').textContent = 'Benvenuto, chi sei?';
+            document.getElementById('loginCancelBtn').style.display = 'none';
+            // Nome cambiato: ridisegna la bacheca (pulsanti Ritira/Modifica dipendono da chi sei)
+            if (changed) { try { window.renderRequests(); } catch (e) {} }
             const lm = document.getElementById('login-modal');
             lm.style.opacity = '0';
             setTimeout(() => { lm.style.display = 'none'; checkFirstVisitAndShowGuide(); }, 300);
