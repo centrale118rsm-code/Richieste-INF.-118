@@ -422,6 +422,15 @@
                     </div>
                 </div>
 
+                <!-- Cambio Turno: stesso giorno oppure cambio notte (notti in giorni diversi) -->
+                <div class="form-group" id="cambio-mode-group" style="display:none; background:#eff6ff; padding:12px; border-radius:10px; border:1px solid #bfdbfe;">
+                    <label style="color:#1e40af;">Che cambio vuoi fare?</label>
+                    <div style="display:flex; flex-direction:column; gap:6px;">
+                        <label class="checkbox-wrapper"><input type="radio" name="cambioMode" value="giorno" checked> Turno dello stesso giorno</label>
+                        <label class="checkbox-wrapper"><input type="radio" name="cambioMode" value="notte"> Cambio notte con un collega (giorni diversi)</label>
+                    </div>
+                </div>
+
                 <!-- Con chi fai il cambio -->
                 <div class="form-group" id="swap-group" style="display:none; background:#f1f5f9; padding:12px; border-radius:10px; border:1px solid #e2e8f0;">
                     <label>Con chi fai il cambio?</label>
@@ -457,6 +466,22 @@
                     </div>
                     <div style="color:#64748b; font-size:0.72rem; font-weight:500; margin-top:8px;">
                         Indica il turno di ciascuno prima dello scambio: verrà controllato che corrisponda davvero al programma turni, altrimenti la richiesta non verrà accettata.
+                    </div>
+                </div>
+
+                <!-- Cambio notte: la tua notte e una delle notti del collega (dal programma turni) -->
+                <div class="form-group" id="cambio-notte-group" style="display:none; background:#eef2ff; padding:12px; border-radius:10px; border:1px solid #c7d2fe;">
+                    <label style="color:#3730a3;">La tua notte da cambiare</label>
+                    <select id="reqMyNight" class="form-control">
+                        <option value="" disabled selected>Caricamento notti...</option>
+                    </select>
+                    <label style="color:#3730a3; margin-top:12px;" id="reqOtherNightLabel">Notte del collega</label>
+                    <select id="reqOtherNight" class="form-control">
+                        <option value="" disabled selected>Scegli prima con chi fai il cambio</option>
+                    </select>
+                    <div id="night-swap-info" style="display:none; margin-top:10px; background:#fff; border:1px solid #c7d2fe; border-radius:8px; padding:10px; color:#312e81; font-size:0.8rem; font-weight:600; line-height:1.45;"></div>
+                    <div style="color:#64748b; font-size:0.72rem; font-weight:500; margin-top:8px;">
+                        Le notti sono quelle del programma turni di adesso. Con chi ha la notte il giorno prima o il giorno dopo della tua il cambio si fa con mattina + notte.
                     </div>
                 </div>
 
@@ -1311,6 +1336,9 @@
             document.querySelectorAll('input[name="reqTimeSlot"]').forEach(cb => cb.checked = false);
             if (allSlotCb) allSlotCb.checked = false;
             cambioShiftsGroup.style.display = 'none';
+            document.getElementById('cambio-mode-group').style.display = 'none';
+            document.getElementById('cambio-notte-group').style.display = 'none';
+            document.getElementById('reqMyNight').required = false; document.getElementById('reqOtherNight').required = false;
             myShiftSel.required = false; otherShiftSel.required = false;
             dateFromGroup.style.display = 'block';
             dateToGroup.style.display = 'block';
@@ -1341,6 +1369,10 @@
                 repDateGroup.style.display = 'block';
                 if (repSel) repSel.required = true;
                 populateRepDateSelect();
+            }
+            if (val === 'cambio_turno') {
+                document.getElementById('cambio-mode-group').style.display = 'block';
+                applyCambioMode();
             }
             if (APPROVAL_TYPES.includes(val)) {
                 approvalGroup.style.display = 'block';
@@ -1390,6 +1422,9 @@
             if (r.notes) document.getElementById('reqNotes').value = r.notes;
 
             if (r.type === 'cambio_turno') {
+                const modeR = document.querySelector(`input[name="cambioMode"][value="${r.nightSwap ? 'notte' : 'giorno'}"]`);
+                if (modeR) modeR.checked = true;
+                applyCambioMode(r.nightSwap ? r.dateFrom : null, r.nightSwap ? r.otherDate : null);
                 if (r.myShift) document.getElementById('reqMyShift').value = r.myShift;
                 if (r.otherShift) document.getElementById('reqOtherShift').value = r.otherShift;
                 const lbl = document.getElementById('reqOtherShiftLabel');
@@ -1459,6 +1494,160 @@
             tryOpenPendingDeepLink();
         });
 
+        // ============================================================
+        // CAMBIO NOTTE: la tua notte e una delle notti del collega, lette dal programma
+        // turni (calendario su Firebase, un documento per mese). Se il calendario su
+        // Firebase non c'è, si usa il file Excel come prima.
+        // ============================================================
+        const MONTH_IT_UP = ["GENNAIO","FEBBRAIO","MARZO","APRILE","MAGGIO","GIUGNO","LUGLIO","AGOSTO","SETTEMBRE","OTTOBRE","NOVEMBRE","DICEMBRE"];
+        let NIGHTS_LIVE = null, nightsLoadPromise = null;
+        const pad2 = n => String(n).padStart(2, "0");
+        function isoTodayR() { const d = new Date(); return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()); }
+        function nightsLoad() {
+            if (nightsLoadPromise) return nightsLoadPromise;
+            nightsLoadPromise = (async () => {
+                try { await authReadyPromise; } catch (e) {}
+                const out = {}; let found = 0;
+                const now = new Date();
+                for (let k = 0; k < 7; k++) {
+                    const d = new Date(now.getFullYear(), now.getMonth() + k, 1), y = d.getFullYear(), m = d.getMonth();
+                    try {
+                        const snap = await getDoc(doc(db, "infermieri26_config", "prova_turni_" + y + "-" + pad2(m + 1)));
+                        if (!snap.exists()) continue;
+                        found++;
+                        const cells = snap.data().cells || {};
+                        Object.keys(cells).forEach(key => {
+                            const mm = key.match(/^(.+)__([A-Z]+)-(\d+)(?:@\d{4})?$/); if (!mm) return;
+                            const mi = MONTH_IT_UP.indexOf(mm[2]); if (mi !== m) return;
+                            const c = cells[key] || {};
+                            let v = String(c.v || "").trim(); const sl = v.indexOf("/"); if (sl !== -1) v = v.slice(0, sl).trim();
+                            if (v.toUpperCase() !== "N" || String(c.subV || "").trim()) return;   // solo notti vere, senza assenze
+                            const who = normalizeRepNameR(mm[1]);
+                            (out[who] = out[who] || []).push(y + "-" + pad2(m + 1) + "-" + pad2(+mm[3]));
+                        });
+                    } catch (e) { console.warn("Notti: mese non letto", y, m + 1, e); }
+                }
+                if (found) NIGHTS_LIVE = out;
+            })();
+            return nightsLoadPromise;
+        }
+        // Notti di un operatore da oggi in avanti
+        function nightsOf(name) {
+            const n = normalizeRepNameR(name), today = isoTodayR();
+            let list = [];
+            if (NIGHTS_LIVE) list = (NIGHTS_LIVE[n] || []).slice();
+            else Object.keys(SHIFT_MATRIX_R).forEach(k => {
+                const [m, d] = k.split("_").map(Number);
+                const raw = String(getShiftCodeFor(name, m, d) || "").toUpperCase().replace(/\s+/g, "");
+                if (raw === "N" || raw.startsWith("N/")) list.push(REP_YEAR + "-" + pad2(m) + "-" + pad2(d));
+            });
+            return [...new Set(list)].filter(x => x >= today).sort();
+        }
+        function nightLabel(iso) {
+            if (!iso) return "";
+            const [y, m, d] = iso.split("-").map(Number);
+            return new Date(y, m - 1, d).toLocaleDateString("it-IT", { weekday: "short", day: "numeric", month: "long" });
+        }
+        // 'after' = il collega ha la notte il giorno dopo la mia, 'before' = il giorno prima, 'swap' = altri giorni
+        function nightRel(myIso, otherIso) {
+            const t = s => { const [y, m, d] = s.split("-").map(Number); return Date.UTC(y, m - 1, d); };
+            const diff = Math.round((t(otherIso) - t(myIso)) / 86400000);
+            return diff === 1 ? "after" : diff === -1 ? "before" : "swap";
+        }
+        function nightHowText(r) {
+            const me = r.name || "tu", other = r.swapWith || "il collega", my = nightLabel(r.dateFrom), his = nightLabel(r.otherDate);
+            const kind = r.nightSwapKind || nightRel(r.dateFrom, r.otherDate);
+            if (kind === "after") return `${other} fa mattina + notte ${my}. ${me} ha riposo ${my} e fa la notte di ${his}. Mattine e notti restano coperte.`;
+            if (kind === "before") return `${me} fa mattina + notte ${his}. ${other} ha riposo ${his} e fa la notte di ${my}. Mattine e notti restano coperte.`;
+            return `Scambio di notti: ${me} fa la notte di ${his}, ${other} fa la notte di ${my}. Smonti e riposi intorno li sistema il coordinatore.`;
+        }
+        function cambioIsNight() {
+            const r = document.querySelector('input[name="cambioMode"]:checked');
+            return document.getElementById('reqType').value === 'cambio_turno' && !!r && r.value === 'notte';
+        }
+        function applyCambioMode(keepMy, keepOther) {
+            const night = cambioIsNight();
+            document.getElementById('cambio-shifts-group').style.display = night ? 'none' : 'block';
+            document.getElementById('reqMyShift').required = !night;
+            document.getElementById('reqOtherShift').required = !night;
+            document.getElementById('date-from-group').style.display = night ? 'none' : 'block';
+            document.getElementById('reqDateFrom').required = !night;
+            document.getElementById('cambio-notte-group').style.display = night ? 'block' : 'none';
+            document.getElementById('reqMyNight').required = night;
+            document.getElementById('reqOtherNight').required = night;
+            if (night) return populateNightSelects(keepMy, keepOther);
+        }
+        function fillNightSelect(sel, list, placeholder, extraLabel, firstGroup) {
+            const prev = sel.value;
+            sel.innerHTML = "";
+            const ph = document.createElement('option'); ph.value = ""; ph.disabled = true; ph.selected = true; ph.textContent = placeholder;
+            sel.appendChild(ph);
+            const groups = [];
+            if (firstGroup && firstGroup.list.length) groups.push({ label: firstGroup.label, list: firstGroup.list });
+            list.forEach(iso => {
+                const [y, m] = iso.split("-").map(Number), label = REP_MONTH_NAME[m] + " " + y;
+                let g = groups.find(x => x.label === label); if (!g) groups.push(g = { label, list: [] });
+                g.list.push(iso);
+            });
+            groups.forEach(g => {
+                const og = document.createElement('optgroup'); og.label = g.label;
+                g.list.forEach(iso => { const o = document.createElement('option'); o.value = iso; o.textContent = nightLabel(iso) + (extraLabel ? extraLabel(iso) : ""); og.appendChild(o); });
+                sel.appendChild(og);
+            });
+            if (prev && list.includes(prev)) sel.value = prev;
+        }
+        async function populateNightSelects(keepMy, keepOther) {
+            const mySel = document.getElementById('reqMyNight');
+            mySel.innerHTML = '<option value="" disabled selected>Caricamento notti...</option>';
+            await loadReperibilitaData();
+            await nightsLoad();
+            const me = document.getElementById('reqName').value || currentUser;
+            if (!me || me === 'Centrale 118' || me === 'Ospite') {
+                mySel.innerHTML = '<option value="" disabled selected>Seleziona prima l\'operatore</option>';
+            } else {
+                const mine = nightsOf(me);
+                if (keepMy && !mine.includes(keepMy)) mine.unshift(keepMy);
+                fillNightSelect(mySel, mine, mine.length ? "Scegli la tua notte..." : "Nessuna notte in calendario");
+                if (keepMy) mySel.value = keepMy;
+                if (mySel.value) document.getElementById('reqDateFrom').value = mySel.value;
+            }
+            populateOtherNights(keepOther);
+        }
+        function populateOtherNights(keep) {
+            const sel = document.getElementById('reqOtherNight');
+            const other = document.getElementById('reqNameSwap').value;
+            const lbl = document.getElementById('reqOtherNightLabel');
+            if (lbl) lbl.textContent = other ? 'Notte di ' + other : 'Notte del collega';
+            if (!other) { sel.innerHTML = '<option value="" disabled selected>Scegli prima con chi fai il cambio</option>'; updateNightInfo(); return; }
+            const my = document.getElementById('reqMyNight').value;
+            let list = nightsOf(other).filter(x => x !== my);
+            if (keep && !list.includes(keep)) list.unshift(keep);
+            const near = my ? list.filter(x => nightRel(my, x) !== 'swap') : [];
+            const rest = list.filter(x => !near.includes(x));
+            const extra = iso => !my ? "" : (nightRel(my, iso) === 'after' ? " · giorno dopo la tua (fa M+N)" : nightRel(my, iso) === 'before' ? " · giorno prima della tua (tu fai M+N)" : "");
+            fillNightSelect(sel, rest, list.length ? "Scegli la sua notte..." : "Nessuna notte in calendario", extra, { label: "Vicine alla tua notte (cambio con M+N)", list: near });
+            if (keep) sel.value = keep;
+            updateNightInfo();
+        }
+        function updateNightInfo() {
+            const box = document.getElementById('night-swap-info');
+            const my = document.getElementById('reqMyNight').value, his = document.getElementById('reqOtherNight').value;
+            const other = document.getElementById('reqNameSwap').value, me = document.getElementById('reqName').value || currentUser;
+            if (!my || !his || !other) { box.style.display = 'none'; return; }
+            box.textContent = nightHowText({ name: me, swapWith: other, dateFrom: my, otherDate: his });
+            box.style.display = 'block';
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            document.querySelectorAll('input[name="cambioMode"]').forEach(r => r.addEventListener('change', () => applyCambioMode()));
+            document.getElementById('reqNameSwap').addEventListener('change', () => { if (cambioIsNight()) populateOtherNights(); });
+            document.getElementById('reqName').addEventListener('change', () => { if (cambioIsNight()) populateNightSelects(); });
+            document.getElementById('reqMyNight').addEventListener('change', function() {
+                document.getElementById('reqDateFrom').value = this.value;
+                populateOtherNights(document.getElementById('reqOtherNight').value);
+            });
+            document.getElementById('reqOtherNight').addEventListener('change', updateNightInfo);
+        });
+
         // Tiene il payload pronto in attesa di conferma dell'utente nella finestrella di riepilogo.
         let pendingRequestPayload = null;
 
@@ -1494,8 +1683,16 @@
                 selectedTimeSlots = Array.from(checked).map(cb => cb.value).join(", ");
             }
 
-            let myShift = null, otherShift = null;
-            if (reqType === 'cambio_turno') {
+            let myShift = null, otherShift = null, nightSwap = null;
+            if (reqType === 'cambio_turno' && cambioIsNight()) {
+                const myN = document.getElementById('reqMyNight').value, otN = document.getElementById('reqOtherNight').value;
+                const otherName = document.getElementById('reqNameSwap').value, myName = document.getElementById('reqName').value || currentUser;
+                if (!myN || !otN || !otherName) { alert("Scegli la tua notte, il collega e la sua notte prima di continuare."); return; }
+                if (normalizeRepNameR(otherName) === normalizeRepNameR(myName)) { alert("Scegli un collega diverso da te."); return; }
+                if (myN === otN) { alert("Avete la notte lo stesso giorno: non c'è niente da cambiare."); return; }
+                myShift = 'N'; otherShift = 'N';
+                nightSwap = { myDate: myN, otherDate: otN, kind: nightRel(myN, otN) };
+            } else if (reqType === 'cambio_turno') {
                 myShift    = document.getElementById('reqMyShift').value;
                 otherShift = document.getElementById('reqOtherShift').value;
                 const otherName = document.getElementById('reqNameSwap').value;
@@ -1553,6 +1750,12 @@
                 insertedInShifts:  false,
                 insertedAt:        null
             };
+            if (reqType === 'cambio_turno') {
+                payload.nightSwap = !!nightSwap;
+                payload.otherDate = nightSwap ? nightSwap.otherDate : null;
+                payload.nightSwapKind = nightSwap ? nightSwap.kind : null;
+                if (nightSwap) { payload.dateFrom = payload.dateTo = nightSwap.myDate; payload.effectiveDays = "1"; }
+            }
 
             pendingRequestPayload = payload;
             showRequestSummary(payload);
@@ -1577,12 +1780,13 @@
             let html = '';
             html += row('Operatore', payload.name);
             html += row('Tipo di richiesta', LABELS[payload.type] || payload.type);
-            html += row(payload.type === 'copertura_reperibilita' ? 'Data reperibilità' : 'Giorni', dateLabel);
+            html += row(payload.type === 'copertura_reperibilita' ? 'Data reperibilità' : (payload.nightSwap ? 'La tua notte' : 'Giorni'), payload.nightSwap ? nightLabel(payload.dateFrom) : dateLabel);
             if (payload.timeSlot) html += row('Fasce cedute', payload.timeSlot);
             if (payload.swapWith) html += row('Con chi', payload.swapWith);
+            if (payload.nightSwap) html += row('Notte di ' + payload.swapWith, nightLabel(payload.otherDate)) + `<div style="padding:9px 0; border-bottom:1px solid var(--border); font-size:0.8rem; font-weight:600; color:#3730a3; line-height:1.45;">${nightHowText(payload)}</div>`;
             const SHIFT_NAMES_SUMMARY = { M: 'Mattina', P: 'Pomeriggio', N: 'Notte' };
-            if (payload.myShift) html += row('Il tuo turno', SHIFT_NAMES_SUMMARY[payload.myShift] || payload.myShift);
-            if (payload.otherShift) html += row('Turno di ' + (payload.swapWith || 'collega'), SHIFT_NAMES_SUMMARY[payload.otherShift] || payload.otherShift);
+            if (payload.myShift && !payload.nightSwap) html += row('Il tuo turno', SHIFT_NAMES_SUMMARY[payload.myShift] || payload.myShift);
+            if (payload.otherShift && !payload.nightSwap) html += row('Turno di ' + (payload.swapWith || 'collega'), SHIFT_NAMES_SUMMARY[payload.otherShift] || payload.otherShift);
             if (payload.type !== 'copertura_reperibilita' && payload.type !== 'cambio_turno') html += row('Giorni effettivi', payload.effectiveDays);
             if (payload.notes) html += row('Note', payload.notes);
 
@@ -1887,6 +2091,7 @@
 
                 let periodDetails = dateStr;
                 if (r.type === 'copertura_reperibilita' && r.timeSlot) periodDetails += ` (${r.timeSlot})`;
+                if (r.nightSwap && r.otherDate) periodDetails = `Notte ${formatDateIt(r.dateFrom)} ↔ notte ${formatDateIt(r.otherDate)}`;
                 if (r.swapWith) periodDetails += ` ↔ ${r.swapWith}`;
 
                 const adminTag     = (r.obscured && (window.isAdmin || currentUser === 'Centrale 118')) ? `<span style="color:#ef4444;font-size:0.65rem;margin-right:4px;">[OSCURATA]</span>` : '';
@@ -1988,6 +2193,7 @@
                      <div class="detail-item"><div class="detail-label">Tipo Richiesta</div><div class="detail-value">${getLabel(r.type)}</div></div>`;
 
             if (r.swapWith) html += `<div class="detail-item"><div class="detail-label">Cambio/Copertura con</div><div class="detail-value" style="color:var(--primary)">${r.swapWith}</div></div>`;
+            if (r.nightSwap && r.otherDate) html += `<div class="detail-item"><div class="detail-label">Cambio notte</div><div class="detail-value">Notte ${formatDateIt(r.dateFrom)} di ${r.name} ↔ notte ${formatDateIt(r.otherDate)} di ${r.swapWith}<div style="font-size:0.8rem;font-weight:600;color:#3730a3;margin-top:6px;line-height:1.45;">${nightHowText(r)}</div></div></div>`;
             if (r.timeSlot) html += `<div class="detail-item"><div class="detail-label">Fasce Orarie Scelte</div><div class="detail-value">${r.timeSlot}</div></div>`;
 
             const dFrom   = new Date(r.dateFrom).toLocaleDateString('it-IT');
